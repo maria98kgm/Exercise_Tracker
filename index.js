@@ -1,55 +1,72 @@
 const express = require("express");
-const app = express();
 const cors = require("cors");
-const bodyParser = require("body-parser");
+const mongoose = require("mongoose");
+const app = express();
 
 require("dotenv").config();
 
-app.use(bodyParser.urlencoded({ extendent: false }));
+// connects to MDB
+mongoose.connect(process.env.MONGO_URI, {
+  useNewURLParser: true,
+  useUnifiedTopology: true,
+});
+
+// check if connection succeeded
+const db = mongoose.connection;
+db.on("error", console.error.bind(console, "connection error: "));
+db.once("open", function () {
+  console.log("Connected successfully");
+});
+
+const userSchema = new mongoose.Schema({
+  username: String,
+  log: [
+    {
+      description: String,
+      duration: Number,
+      date: String,
+    },
+  ],
+});
+
+const User = mongoose.model("User", userSchema);
+
+// parses the request body
+app.use(express.urlencoded({ extendent: true }));
+
+// enables cores
 app.use(cors());
+
+// add public directory with all assets
 app.use(express.static("public"));
 
-const users = [];
-
+// routes
 app.get("/", (req, res) => {
   res.sendFile(__dirname + "/views/index.html");
 });
 
-app.get("/api/users", (req, res) => {
+app.post("/api/users", (req, res) => {
+  const user = new User({ username: req.body.username, log: [] });
+
+  user
+    .save()
+    .then((doc) => {
+      res.json({ username: doc.username, _id: doc._id });
+    })
+    .catch((err) => {
+      res.json({ err: err });
+    });
+});
+
+app.get("/api/users", async (req, res) => {
+  const allUsers = await User.find({});
   res.json(
-    users.map((item) => ({
-      username: item.username,
-      _id: item._id,
-    }))
+    allUsers.map((item) => ({ username: item.username, _id: item._id }))
   );
 });
 
-app.post("/api/users", (req, res) => {
-  users.push({ username: req.body.username, _id: users.length + 1, log: [] });
-  res.json({ username: req.body.username, _id: users.length });
-});
-
-app.post("/api/users/:_id/exercises", (req, res) => {
-  const ind = users.findIndex((item) => item._id == req.params._id);
-  const exercises = {
-    description: req.body.description,
-    duration: Number(req.body.duration),
-    date: req.body.date
-      ? new Date(req.body.date).toDateString()
-      : new Date().toDateString(),
-  };
-
-  users[ind].log.push(exercises);
-
-  res.json({
-    ...exercises,
-    username: users[ind].username,
-    _id: users[ind]._id,
-  });
-});
-
-app.get("/api/users/:_id/logs", (req, res) => {
-  const user = users.find((item) => item._id == req.params._id);
+app.get("/api/users/:_id/logs", async (req, res) => {
+  const user = await User.findById(req.params._id);
 
   if (req.query.from) {
     const from = new Date(req.query.from);
@@ -96,8 +113,31 @@ app.get("/api/users/:_id/logs", (req, res) => {
   }
 });
 
+app.post("/api/users/:_id/exercises", async (req, res) => {
+  const user = await User.findById(req.params._id);
+  const exercises = {
+    description: req.body.description,
+    duration: Number(req.body.duration),
+    date: req.body.date
+      ? new Date(req.body.date).toDateString()
+      : new Date().toDateString(),
+  };
+
+  user.log.push(exercises);
+  user
+    .save()
+    .then(() => {
+      res.json({
+        ...exercises,
+        username: user.username,
+        _id: user._id,
+      });
+    })
+    .catch((err) => {
+      res.json({ err: err });
+    });
+});
+
 const listener = app.listen(process.env.PORT || 3000, () => {
   console.log("Your app is listening on port " + listener.address().port);
 });
-
-// http://localhost:3000/api/users/1/logs?from=2010-01-01&to=2020-01-01&limit=2
